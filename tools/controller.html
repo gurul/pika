@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Car Controller</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --edge: #262b36; --text: #e6e8ee; --muted: #8a92a6;
+    --accent: #4fd1c5; --warn: #f6ad55; --danger: #fc8181; --ok: #68d391;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 -apple-system, "Helvetica Neue", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--edge); }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  #status { color: var(--muted); font-size: 13px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  #status.err { color: var(--danger); }
+  main { display: grid; grid-template-columns: minmax(320px, 1fr) 340px; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 14px; }
+  .panel h2 { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin: 0 0 10px; }
+  #video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; object-fit: contain; display: block; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pad button { height: 64px; font-size: 22px; }
+  button { background: #1f2430; color: var(--text); border: 1px solid var(--edge); border-radius: 10px; cursor: pointer; font: inherit; padding: 8px 10px; touch-action: none; user-select: none; -webkit-user-select: none; }
+  button:hover { border-color: #3a4152; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.held, button:active { background: var(--accent); color: #0b0f14; border-color: var(--accent); }
+  button.stop { background: #3a1f24; border-color: #5a2a33; color: var(--danger); }
+  button.stop.held, button.stop:active { background: var(--danger); color: #0b0f14; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row button { flex: 1; }
+  .row button.on { border-color: var(--accent); color: var(--accent); }
+  label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  label output { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .sensors { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .big { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+  .unit { color: var(--muted); font-size: 13px; margin-left: 4px; }
+  .bars { display: flex; gap: 6px; align-items: flex-end; height: 44px; }
+  .bar { flex: 1; background: #2a3040; border-radius: 4px 4px 2px 2px; position: relative; min-height: 4px; transition: height .2s; }
+  .bar span { position: absolute; top: -18px; left: 0; right: 0; text-align: center; font-size: 11px; color: var(--muted); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  kbd { background: #1f2430; border: 1px solid var(--edge); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, monospace; }
+  #log { font: 12px ui-monospace, monospace; color: var(--muted); max-height: 96px; overflow: auto; white-space: pre; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Car Controller</h1>
+  <span id="host" style="color:var(--muted);font-size:13px"></span>
+  <span id="status" role="status" aria-live="polite">connecting…</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Camera</h2>
+    <img id="video" alt="live view from the car">
+    <div class="hint">The board serves one viewer at a time: close other tabs showing the stream. If it stalls, press <kbd>R</kbd> to reload it.</div>
+  </section>
+
+  <div class="stack">
+    <section class="panel">
+      <h2>Drive</h2>
+      <div class="pad">
+        <span></span>
+        <button data-dir="3" aria-label="forward">▲</button>
+        <span></span>
+        <button data-dir="1" aria-label="left">◀</button>
+        <button id="stop" class="stop" aria-label="stop">■</button>
+        <button data-dir="2" aria-label="right">▶</button>
+        <span></span>
+        <button data-dir="4" aria-label="back">▼</button>
+        <span></span>
+      </div>
+      <div style="margin-top:12px">
+        <label>Speed <output id="speedOut">120</output></label>
+        <input id="speed" type="range" min="60" max="255" value="120">
+      </div>
+      <div style="margin-top:8px">
+        <label>Camera pan <output id="panOut">90°</output></label>
+        <input id="pan" type="range" min="10" max="170" step="10" value="90">
+      </div>
+      <div style="margin-top:8px">
+        <label>Straight trim <output id="trimOut">0%</output></label>
+        <input id="trim" type="range" min="-25" max="25" value="0">
+        <div class="hint">Veers right: move right (speeds up the right wheel). Saved to calibration.</div>
+      </div>
+      <div class="hint">Hold a button or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows. Release to stop. <kbd>Space</kbd> stops.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Sensors</h2>
+      <div class="sensors">
+        <div>
+          <div style="color:var(--muted);font-size:13px">Ahead</div>
+          <div><span id="dist" class="big">—</span><span class="unit">cm</span></div>
+        </div>
+        <div>
+          <div style="color:var(--muted);font-size:13px;margin-bottom:18px">Line L · M · R</div>
+          <div class="bars">
+            <div class="bar" id="lineL"><span>—</span></div>
+            <div class="bar" id="lineM"><span>—</span></div>
+            <div class="bar" id="lineR"><span>—</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Autonomous</h2>
+      <div class="row">
+        <button data-mode="track">Line track</button>
+        <button data-mode="avoid">Avoid</button>
+        <button data-mode="follow">Follow</button>
+        <button data-mode="off">Manual</button>
+      </div>
+      <div class="hint">Any drive input returns the car to manual.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </section>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const status = $('#status'), log = $('#log');
+  const speed = $('#speed'), pan = $('#pan');
+  let held = null, driveTimer = null, autonomous = false, busy = false;
+
+  function say(msg, err) { status.textContent = msg; status.classList.toggle('err', !!err); }
+  function addLog(line) {
+    log.textContent = (line + '\n' + log.textContent).split('\n').slice(0, 8).join('\n');
+  }
+
+  async function cmd(body, wait) {
+    const r = await fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ wait: wait ?? 0.6 }, body)) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  }
+
+  // --- drive: repeat a short timed move while held, stop on release -------
+  const DIR_NAME = { 1: 'left', 2: 'right', 3: 'forward', 4: 'back' };
+  function pulse() {
+    if (held === null) return;
+    cmd({ frame: { N: 2, D1: held, D2: +speed.value, T: 450 }, wait: 0.25 })
+      .then(j => say(`${DIR_NAME[held]} @ ${speed.value}`))
+      .catch(e => say(e.message, true));
+  }
+  function start(dir, el) {
+    if (held === dir) return;
+    held = dir; autonomous = false; setModeButtons('off');
+    document.querySelectorAll('.pad button').forEach(b => b.classList.toggle('held', b === el));
+    pulse();
+    clearInterval(driveTimer); driveTimer = setInterval(pulse, 300);
+  }
+  function stop() {
+    const was = held; held = null; clearInterval(driveTimer); driveTimer = null;
+    document.querySelectorAll('.pad button').forEach(b => b.classList.remove('held'));
+    cmd({ frame: { N: 100 }, wait: 0.4 }).then(() => { if (was !== null || !autonomous) say('stopped'); })
+      .catch(e => say(e.message, true));
+  }
+
+  document.querySelectorAll('[data-dir]').forEach(b => {
+    const dir = +b.dataset.dir;
+    b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); start(dir, b); });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => b.addEventListener(ev, () => { if (held === dir) stop(); }));
+  });
+  const stopBtn = $('#stop');
+  stopBtn.addEventListener('pointerdown', () => { stopBtn.classList.add('held'); stop(); });
+  stopBtn.addEventListener('pointerup', () => stopBtn.classList.remove('held'));
+
+  const KEYS = { w: 3, ArrowUp: 3, s: 4, ArrowDown: 4, a: 1, ArrowLeft: 1, d: 2, ArrowRight: 2 };
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === ' ') { e.preventDefault(); stop(); return; }
+    if (e.key === 'r' || e.key === 'R') { reloadStream(); return; }
+    const dir = KEYS[e.key]; if (dir === undefined || e.repeat) return;
+    e.preventDefault(); start(dir, document.querySelector(`[data-dir="${dir}"]`));
+  });
+  window.addEventListener('keyup', e => { const dir = KEYS[e.key]; if (dir !== undefined && held === dir) stop(); });
+  window.addEventListener('blur', () => { if (held !== null) stop(); });
+
+  // --- sliders -----------------------------------------------------------
+  speed.addEventListener('input', () => $('#speedOut').textContent = speed.value);
+  let panTimer = null;
+  pan.addEventListener('input', () => {
+    $('#panOut').textContent = pan.value + '°';
+    clearTimeout(panTimer);
+    panTimer = setTimeout(() => cmd({ frame: { N: 5, D1: 1, D2: +pan.value }, wait: 0.4 })
+      .then(() => say(`camera ${pan.value}°`)).catch(e => say(e.message, true)), 120);
+  });
+
+  // --- straight trim -------------------------------------------------------
+  const trim = $('#trim');
+  function trimLabel(pct) { $('#trimOut').textContent = (pct > 0 ? '+' : '') + pct + '%'; }
+  fetch('/trim').then(r => r.json()).then(t => {
+    const pct = Math.round((t.right - t.left) * 100); trim.value = pct; trimLabel(pct);
+  }).catch(() => {});
+  let trimTimer = null;
+  trim.addEventListener('input', () => {
+    const pct = +trim.value; trimLabel(pct);
+    const left = pct < 0 ? 1 + pct / 100 : 1, right = pct > 0 ? 1 + pct / 100 : 1;
+    clearTimeout(trimTimer);
+    trimTimer = setTimeout(() => fetch('/trim', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ left, right }) }).then(() => say(`trim ${pct > 0 ? '+' : ''}${pct}%`)).catch(e => say(e.message, true)), 150);
+  });
+
+  // --- autonomous modes --------------------------------------------------
+  function setModeButtons(mode) {
+    document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  }
+  document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+    const mode = b.dataset.mode;
+    if (mode === 'off') { autonomous = false; setModeButtons('off'); stop(); return; }
+    autonomous = true; setModeButtons(mode);
+    cmd({ cmd: 'mode ' + mode }).then(j => say(`mode: ${mode} ${j.reply || ''}`)).catch(e => say(e.message, true));
+  }));
+  setModeButtons('off');
+
+  // --- sensors -----------------------------------------------------------
+  function bar(id, v) {
+    const el = $('#' + id); const n = v == null ? null : +v;
+    el.style.height = n == null ? '4px' : Math.max(4, Math.min(44, n / 1023 * 44)) + 'px';
+    el.querySelector('span').textContent = n == null ? '—' : n;
+  }
+  function num(reply) { const m = /_(-?\d+)\}/.exec(reply || ''); return m ? +m[1] : null; }
+  // distance streams continuously, between drive renewals; line sensors only when idle
+  async function pollDistance() {
+    if (busy) return;
+    busy = true;
+    try {
+      const d = await cmd({ frame: { N: 21, D1: 2 }, wait: 0.6 });
+      const v = num(d.reply); $('#dist').textContent = v ?? '—';
+      $('#dist').style.color = v != null && v < 30 ? 'var(--danger)' : v != null && v < 60 ? 'var(--warn)' : '';
+      if (!status.classList.contains('err') && status.textContent === 'connecting…') say('ready');
+    } catch (e) { say(e.message, true); }
+    finally { busy = false; }
+  }
+  async function pollLines() {
+    if (held !== null || busy) return;
+    busy = true;
+    try {
+      for (const [i, id] of [[0, 'lineL'], [1, 'lineM'], [2, 'lineR']]) {
+        const r = await cmd({ frame: { N: 22, D1: i }, wait: 0.8 });
+        bar(id, num(r.reply));
+      }
+    } catch (e) { say(e.message, true); }
+    finally { busy = false; }
+  }
+  setInterval(pollDistance, 350);
+  setInterval(pollLines, 2500);
+  function poll() { pollDistance(); }
+
+  // --- video -------------------------------------------------------------
+  let streamUrl = '';
+  function reloadStream() { $('#video').src = streamUrl + '?t=' + Date.now(); }
+  fetch('/config').then(r => r.json()).then(c => {
+    $('#host').textContent = c.host; streamUrl = c.stream; reloadStream();
+    say('ready'); poll();
+  }).catch(e => say('controller server not reachable', true));
+
+  window.addEventListener('beforeunload', () => { if (held !== null) navigator.sendBeacon('/cmd', JSON.stringify({ frame: { N: 100 } })); });
+})();
+</script>
+</body>
+</html>

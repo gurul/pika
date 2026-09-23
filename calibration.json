@@ -1,0 +1,14 @@
+{
+  "servo_center_deg": 90,
+  "servo_center_note": "confirmed physically straight by Guru 2026-09-22; command value is plain degrees, 10-degree steps, 10..170",
+  "forward_speed": 120,
+  "forward_cm_per_s": 22.5,
+  "forward_pulse_ms": 400,
+  "turn_speed": 140,
+  "turn_deg_per_s": 189.5,
+  "turn_pulse_ms": 500,
+  "motor_b_forward": null,
+  "pivot_ab_forward_sign": 1,
+  "yaw_left_sign": -1,
+  "turn_rate_source": "gyro N=24"
+}

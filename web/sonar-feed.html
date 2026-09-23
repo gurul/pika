@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live sonar · ELEGOO</title>
+<style>
+:root{color-scheme:dark;--lime:#62f51f;--muted:#6b9664;--line:#173d1b;--bg:#020603;--red:#ff3434;--amber:#e8b75a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--lime);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;min-height:100vh;display:flex;flex-direction:column}
+header{display:flex;justify-content:space-between;align-items:center;padding:27px 4vw 21px;border-bottom:1px solid var(--line);gap:16px}.brand{display:flex;align-items:center;gap:13px;font-size:15px;letter-spacing:.15em}.mark{width:25px;height:25px;border:1px solid var(--lime);border-radius:50%;position:relative;box-shadow:0 0 18px #62f51114}.mark:after{content:"";position:absolute;width:11px;height:1px;background:var(--lime);left:12px;top:12px;transform:rotate(-55deg);transform-origin:left}
+.status{display:flex;align-items:center;gap:9px;font-size:12px;letter-spacing:.07em;color:var(--muted)}.dot{width:6px;height:6px;background:currentColor;border-radius:50%}.status.live{color:var(--lime)}.status.warn{color:var(--amber)}
+main{width:100%;max-width:1580px;margin:auto;flex:1;display:flex;flex-direction:column;padding:23px 4vw 0}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;color:var(--muted);font-size:11px;letter-spacing:.08em}.toolbar label{display:flex;align-items:center;gap:10px}select{font:inherit;color:var(--lime);border:1px solid var(--line);padding:7px 25px 7px 10px;background:#061109;border-radius:3px;cursor:pointer}select:focus{outline:1px solid var(--lime)}
+.radar{position:relative;flex:1;min-height:260px;width:100%;aspect-ratio:1.95;max-height:calc(100vh - 280px);margin:19px auto 0}canvas{display:block;width:100%;height:100%}.notice{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);max-width:90%;padding:12px 18px;text-align:center;color:var(--amber);background:#020903ed;border:1px solid #3b4028;font-size:13px;line-height:1.6;white-space:pre-line;border-radius:3px;pointer-events:none}.notice[hidden]{display:none}
+.readings{display:grid;grid-template-columns:1.15fr 1fr 1fr 1fr;gap:20px;padding:22px 0 20px;border-top:1px solid var(--line)}.metric label{display:block;color:var(--muted);font-size:10px;letter-spacing:.13em;margin-bottom:9px}.value{font-size:clamp(20px,2.6vw,35px);letter-spacing:-.055em;line-height:1.15;white-space:nowrap}.value small{font-size:13px;letter-spacing:0;color:var(--muted);margin-left:5px}.value.text{font-size:clamp(15px,1.9vw,24px);letter-spacing:-.025em}.sub{color:var(--muted);font-size:10px;margin-top:9px;min-height:13px;line-height:1.4}.amber{color:var(--amber)}
+footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:17px 4vw 21px;border-top:1px solid var(--line);font-size:10px;color:var(--muted);line-height:1.7}.legend{display:flex;flex-wrap:wrap;gap:19px}.legend span{display:flex;align-items:center;gap:7px}.swatch{width:13px;height:2px;background:var(--lime)}.swatch.return{background:var(--red)}.fine{text-align:right;max-width:500px}a{color:var(--muted);text-decoration:none}a:hover{text-decoration:underline;color:var(--lime)}
+@media(max-width:650px){header{padding:19px 5vw}.brand{font-size:12px}.status{font-size:10px}main{padding:20px 5vw 0}.toolbar{font-size:9px;align-items:flex-start}.radar{min-height:230px;max-height:none;margin-top:18px}.readings{grid-template-columns:1fr 1fr;gap:24px 16px;padding:23px 0}.value{font-size:27px}.value.text{font-size:21px}footer{display:block;padding:18px 5vw}.fine{text-align:left;margin-top:13px}.notice{font-size:11px;width:max-content}}
+</style>
+</head>
+<body>
+<header><div class="brand"><span class="mark" aria-hidden="true"></span>ELEGOO <span style="color:var(--muted)">/</span> LIVE SONAR</div><div id="status" class="status" role="status"><span class="dot"></span><span id="statusText">WAITING FOR FEED</span></div></header>
+<main>
+<div class="toolbar"><span id="run">CONNECTING TO CONTROLLER</span><label>DISPLAY RANGE <select id="range" aria-label="Radar display range"><option value="100">100 cm</option><option value="200" selected>200 cm</option><option value="400">400 cm</option></select></label></div>
+<div class="radar"><canvas id="radar" role="img" aria-label="Live semicircular sonar radar: 90 degrees is straight ahead. Red rays show measured returns; blank areas are unknown."></canvas><div id="notice" class="notice">Waiting for angle-tagged sonar data</div></div>
+<div class="readings">
+<div class="metric"><label>SONAR ANGLE</label><div id="angle" class="value">—<small>°</small></div><div id="angleSub" class="sub">90° is straight ahead</div></div>
+<div class="metric"><label>DISTANCE</label><div id="distance" class="value">—<small>cm</small></div><div id="distanceSub" class="sub">Waiting for a settled reading</div></div>
+<div class="metric"><label>FEED RATE</label><div id="rate" class="value">—<small>Hz</small></div><div id="age" class="sub">No samples yet</div></div>
+<div class="metric"><label>CONTROLLER</label><div id="drive" class="value text">Waiting</div><div id="reason" class="sub">Read-only sonar display</div></div>
+</div>
+</main>
+<footer><div class="legend"><span><i class="swatch"></i>Sensor direction</span><span><i class="swatch return"></i>Measured return</span></div><div class="fine">Recent returns fade in 2 seconds. Blank space is unknown. This is not a room map.<br>Visual style inspired by <a href="https://github.com/TechTalkies/YouTube/tree/41f0d4115bbe2ca86aa9ff43073dbd843450151b/19%20Radar" target="_blank" rel="noreferrer">Tech Talkies Radar</a>.</div></footer>
+<script>
+'use strict';
+const $ = id => document.getElementById(id), canvas = $('radar'), ctx = canvas.getContext('2d');
+let feed=null, receivedAt=0, networkError=false, range=200, size={w:0,h:0}, previousAngle=null, trails=[], textUpdatedAt=-Infinity;
+const lime='#62f51f';
+function resize(){const box=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);size={w:box.width,h:box.height};canvas.width=Math.round(box.width*dpr);canvas.height=Math.round(box.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}
+new ResizeObserver(resize).observe(canvas);$('range').addEventListener('change',e=>range=Number(e.target.value));
+function dataAge(now){return feed?.age_s==null?Infinity:feed.age_s+(now-receivedAt)/1000;}
+function state(now){if(networkError)return 'disconnected';if(!feed)return 'waiting';if(['ended','missing','waiting','clock_error'].includes(feed.status))return feed.status;return dataAge(now)>feed.stale_s?'stale':feed.status;}
+const labels={live:'LIVE',unknown:'LIVE · NO ECHO',settling:'LIVE · SENSOR TURNING',stale:'STALE DATA',waiting:'WAITING FOR FEED',missing:'WAITING FOR CONTROLLER',ended:'RUN ENDED',disconnected:'FEED DISCONNECTED',clock_error:'SAMPLE CLOCK MISMATCH'};
+const notices={waiting:'Waiting for angle-tagged sonar data',missing:'Waiting for the controller to create its log',ended:'Run ended',stale:'No fresh sonar data',disconnected:'Live feed disconnected · reconnecting',clock_error:'Sample timestamp is ahead of this computer'};
+function updateText(now){const s=state(now), latest=feed?.latest, live=['live','unknown','settling'].includes(s), age=dataAge(now);
+ $('statusText').textContent=labels[s];$('status').className='status '+(live?'live':'warn');
+ $('run').textContent=feed?feed.run.toUpperCase():'CONNECTING TO CONTROLLER';
+ $('notice').hidden=!(s in notices);$('notice').textContent=notices[s]||'';
+ $('angle').innerHTML=latest?`${Math.round(latest.pan)}<small>°</small>`:'—<small>°</small>';
+ $('angleSub').textContent=latest&&!latest.settled?'Moving toward reported angle':'90° is straight ahead';
+ $('distance').className='value'+(s==='unknown'?' amber':'');
+ if(!live){$('distance').innerHTML='—<small>cm</small>';$('distanceSub').textContent='No current range';}
+ else if(!latest.settled){$('distance').innerHTML='—<small>cm</small>';$('distanceSub').textContent='Waiting for the servo to settle';}
+ else if(!latest.valid_return){$('distance').textContent='Unknown';$('distanceSub').textContent='No echo does not mean clear';}
+ else{$('distance').innerHTML=`${Math.round(latest.distance_cm)}<small>cm</small>`;$('distanceSub').textContent=latest.distance_cm>range?'Beyond selected display range':'Latest settled sonar return';}
+ $('rate').innerHTML=`${live?(feed.sample_hz||0).toFixed(1):'—'}<small>Hz</small>`;
+ $('age').textContent=Number.isFinite(age)?`Last sample ${age<1?Math.round(age*1000)+' ms':age.toFixed(1)+' s'} ago`:'No samples yet';
+ const d=feed?.decision||{}, drive=['ended','stale','disconnected','missing','waiting','clock_error'].includes(s)?(s==='ended'?'Ended':'Unavailable'):feed.observe?'Observing':d.spin?'Turn requested':(d.left||d.right)?'Drive requested':'Idle';
+ $('drive').textContent=drive;$('reason').textContent=d.reason?String(d.reason).replaceAll('_',' '):'Read-only sonar display';
+}
+function line(x1,y1,x2,y2,color,width=1,alpha=1){ctx.globalAlpha=alpha;ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.globalAlpha=1;}
+function ray(angle,radius,origin){const a=angle*Math.PI/180;return{x:origin.x+radius*Math.cos(a),y:origin.y-radius*Math.sin(a)};}
+function draw(now){const{w,h}=size;if(!w||!h){requestAnimationFrame(draw);return;}ctx.clearRect(0,0,w,h);
+ const margin=w<600?24:37, radius=Math.min(w/2-margin,h-45), origin={x:w/2,y:h-29}, currentState=state(now), live=['live','unknown','settling'].includes(currentState);
+ ctx.font=`${w<600?10:12}px ui-monospace,monospace`;ctx.textAlign='center';ctx.textBaseline='middle';
+ // The persistent grid mirrors the linked Processing radar: four half-rings,
+ // 30° spokes and a baseline, with conventional 90° straight ahead.
+ for(let n=1;n<=4;n++){const r=radius*n/4;ctx.strokeStyle='#3c8f24';ctx.globalAlpha=n===4?.85:.68;ctx.lineWidth=1;ctx.beginPath();ctx.arc(origin.x,origin.y,r,Math.PI,2*Math.PI);ctx.stroke();ctx.globalAlpha=1;ctx.fillStyle='#79bd61';ctx.textAlign='center';ctx.fillText(`${Math.round(range*n/4)} cm`,origin.x+r-18,origin.y+17);}
+ line(origin.x-radius,origin.y,origin.x+radius,origin.y,'#62f51f',1,.8);
+ for(let a=30;a<180;a+=30){const p=ray(a,radius,origin),label=ray(a,radius+20,origin);line(origin.x,origin.y,p.x,p.y,'#438f2b',1,.68);ctx.fillStyle=lime;ctx.fillText(`${a}°`,label.x,label.y);}
+ // Only telemetry angles contribute to this trail. There is no timer-driven
+ // sweeping animation and no interpolation that invents observed directions.
+ trails=trails.filter(t=>now-t.at<1100);
+ if(live)for(const t of trails){const p=ray(t.angle,radius,origin);line(origin.x,origin.y,p.x,p.y,lime,2,.15*(1-(now-t.at)/1100));}
+ for(const p of feed?.points||[]){const age=p.age_s+(now-receivedAt)/1000;if(age>feed.history_s||p.distance_cm>range)continue;const hit=ray(p.angle,radius*p.distance_cm/range,origin),edge=ray(p.angle,radius,origin),opacity=Math.max(0,1-age/feed.history_s);line(hit.x,hit.y,edge.x,edge.y,'#ff3434',w<600?3:5,.75*opacity);ctx.fillStyle='#ff6860';ctx.globalAlpha=opacity;ctx.beginPath();ctx.arc(hit.x,hit.y,3.1,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+ if(feed?.latest){const p=ray(feed.latest.pan,radius,origin);ctx.save();ctx.shadowBlur=live?14:0;ctx.shadowColor=lime;if(!feed.latest.settled)ctx.setLineDash([7,7]);line(origin.x,origin.y,p.x,p.y,live?lime:'#47733d',live?3:1.5,live?.9:.5);ctx.restore();}
+ ctx.fillStyle=lime;ctx.beginPath();ctx.arc(origin.x,origin.y,4,0,2*Math.PI);ctx.fill();
+ if(now-textUpdatedAt>=100){updateText(now);textUpdatedAt=now;}requestAnimationFrame(draw);
+}
+async function poll(){try{const r=await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(2000)});if(!r.ok)throw Error(r.status);const data=await r.json();const now=performance.now();if(data.latest&&data.latest.pan!==previousAngle&&data.age_s<=data.stale_s){trails.push({angle:data.latest.pan,at:now});previousAngle=data.latest.pan;}if(feed&&feed.run!==data.run)trails=[];feed=data;receivedAt=now;networkError=false;}catch(_){networkError=true;}finally{setTimeout(poll,100);}}
+resize();requestAnimationFrame(draw);poll();
+</script>
+</body>
+</html>
