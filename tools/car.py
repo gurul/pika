@@ -17,8 +17,9 @@ Commands (shortcuts or raw JSON):
   mode track|avoid|follow|off                autonomous modes
   {"N":21,"D1":2}                            any raw frame
 """
-import argparse, json, socket, sys, threading, time
+import argparse, json, os, socket, sys, threading, time
 
+CAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calibration.json")
 DIR = {"left": 1, "right": 2, "fwd": 3, "back": 4}
 MODE = {"track": 1, "avoid": 2, "follow": 3}
 
@@ -52,8 +53,22 @@ def parse_telemetry(frame, now=None):
     return sample
 
 
+def load_pan_center():
+    """The raw servo angle that points the sonar straight ahead."""
+    try:
+        return int(json.load(open(CAL)).get("servo_center_deg", 90))
+    except (OSError, ValueError, TypeError):
+        return 90
+
+
 class Car:
-    def __init__(self, host, port=100, timeout=5.0):
+    """Pan angles are logical: 90 is straight ahead. send() adds the saved
+    center offset to outgoing N=5/N=28 angles, and telemetry reports the
+    logical angle back. A frame with "raw": true skips the offset."""
+
+    def __init__(self, host, port=100, timeout=5.0, pan_center=None):
+        self.pan_center = load_pan_center() if pan_center is None else pan_center
+        self._pan_sent = {}            # raw angle -> logical angle it was sent for
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(0.2)
         self.seq = 0
@@ -91,6 +106,9 @@ class Car:
                     continue
                 if frame.startswith("{T_"):
                     sample = parse_telemetry(frame)
+                    if sample is not None and "pan" in sample:
+                        raw = sample["pan"]
+                        sample["pan"] = self._pan_sent.get(raw, raw - (self.pan_center - 90))
                     if sample is not None:
                         self.telemetry = sample
                         self.telemetry_count += 1
@@ -101,7 +119,21 @@ class Car:
                     self.lock.notify_all()
         self.alive = False
 
+    def set_pan_center(self, center):
+        self.pan_center = int(center)
+        self._pan_sent.clear()
+
+    def _pan(self, obj):
+        key = {5: "D2", 28: "D1"}.get(obj.get("N"))
+        if obj.get("raw") or key is None or key not in obj:
+            return {k: v for k, v in obj.items() if k != "raw"}
+        logical = int(obj[key])
+        raw = max(10, min(170, logical + self.pan_center - 90))
+        self._pan_sent[raw] = logical
+        return {**obj, key: raw}
+
     def send(self, obj, wait=1.0):
+        obj = self._pan(obj)
         with self.send_lock:
             self.seq += 1
             obj = {"H": str(self.seq), **obj}

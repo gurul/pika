@@ -11,7 +11,7 @@ import argparse, json, os, sys, threading, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from car import Car, parse  # noqa: E402
+from car import Car, load_pan_center, parse  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CAL = os.path.join(HERE, "..", "calibration.json")
@@ -29,6 +29,16 @@ def save_trim(left, right):
     json.dump(cal, open(CAL, "w"), indent=2)
 
 
+def save_front(center, dist_cm):
+    """Store the raw servo angle that points the sonar straight ahead."""
+    import time
+    cal = load_cal(); cal["servo_center_deg"] = center
+    cal["servo_center_note"] = (f"front: raw servo angle that points the sonar straight ahead, "
+                                f"set in the controller {time.strftime('%Y-%m-%d')}; "
+                                f"read {dist_cm if dist_cm is not None else 'no echo'} cm when saved")
+    json.dump(cal, open(CAL, "w"), indent=2)
+
+
 class Link:
     """One TCP session to the car, rebuilt on demand, one command at a time.
     Forward drive uses independent wheel speeds with the straight-line trim,
@@ -41,8 +51,15 @@ class Link:
         self.lock = threading.Lock()
         cal = load_cal()
         self.trim = [cal.get("trim_left", 1.0), cal.get("trim_right", 1.0)]
+        self.pan_center = load_pan_center()
         self.diff_until = 0.0
         threading.Thread(target=self._deadman, daemon=True).start()
+
+    def set_pan_center(self, center):
+        self.pan_center = center
+        with self.lock:
+            if self.car is not None:
+                self.car.set_pan_center(center)
 
     def _deadman(self):
         import time
@@ -66,7 +83,7 @@ class Link:
             self.diff_until = 0.0
         with self.lock:
             if self.car is None or not self.car.alive:
-                self.car = Car(self.host, 100, timeout=3.0)
+                self.car = Car(self.host, 100, timeout=3.0, pan_center=self.pan_center)
             try:
                 return self.car.send(frame, wait=wait)
             except OSError:
@@ -101,6 +118,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif self.path == "/trim":
             self._json(200, {"left": self.link.trim[0], "right": self.link.trim[1]})
+        elif self.path == "/center":
+            self._json(200, {"center": self.link.pan_center})
         elif self.path == "/config":
             self._json(200, {"host": self.car_host,
                              "stream": f"http://{self.car_host}:81/stream",
@@ -118,6 +137,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.link.trim = [left, right]; save_trim(left, right)
                 return self._json(200, {"left": left, "right": right})
             except (ValueError, KeyError) as e:
+                return self._json(400, {"error": str(e)})
+        if self.path == "/center":
+            try:
+                req = json.loads(self.rfile.read(n) or b"{}")
+                center = int(req["center"])
+                if not 10 <= center <= 170:
+                    raise ValueError("center must be 10..170")
+                dist = req.get("dist")
+                save_front(center, int(dist) if dist is not None else None)
+                self.link.set_pan_center(center)
+                return self._json(200, {"center": center})
+            except (ValueError, KeyError, TypeError) as e:
                 return self._json(400, {"error": str(e)})
         if self.path != "/cmd":
             return self._json(404, {"error": "not found"})

@@ -44,6 +44,12 @@
   .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
   kbd { background: #1f2430; border: 1px solid var(--edge); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, monospace; }
   #log { font: 12px ui-monospace, monospace; color: var(--muted); max-height: 96px; overflow: auto; white-space: pre; margin: 0; }
+  .radar-head { display: flex; justify-content: space-between; align-items: center; margin: 14px 0 6px; color: var(--muted); font-size: 13px; }
+  .radar-head select { background: #1f2430; color: var(--text); border: 1px solid var(--edge); border-radius: 6px; font: inherit; font-size: 12px; padding: 2px 4px; }
+  .aim { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1fr 1fr; gap: 8px; align-items: center; }
+  .aim button { height: 48px; font-size: 18px; }
+  .aim-read { text-align: center; }
+  #radar { width: 100%; aspect-ratio: 2 / 1.1; display: block; background: #0b0e12; border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -105,6 +111,30 @@
           </div>
         </div>
       </div>
+      <div class="radar-head">
+        <span>Sonar · <span id="panNow">90°</span></span>
+        <select id="range" aria-label="radar range">
+          <option value="100">100 cm</option><option value="200" selected>200 cm</option><option value="400">400 cm</option>
+        </select>
+      </div>
+      <canvas id="radar" role="img" aria-label="sonar radar: 90 degrees is straight ahead, left is left"></canvas>
+      <div class="hint">Each reading is drawn at the angle the sonar faced. Grey ticks are no echo, which does not mean clear. Readings fade after 10 s.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Sonar front</h2>
+      <div class="aim">
+        <button data-nudge="5" aria-label="turn sonar left 5 degrees">◀◀</button>
+        <button data-nudge="1" aria-label="turn sonar left 1 degree">◀</button>
+        <div class="aim-read"><span id="aimRaw" class="big">—</span><span class="unit">° raw</span></div>
+        <button data-nudge="-1" aria-label="turn sonar right 1 degree">▶</button>
+        <button data-nudge="-5" aria-label="turn sonar right 5 degrees">▶▶</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="saveFront">Save as front</button>
+        <button id="gotoFront">Back to saved</button>
+      </div>
+      <div class="hint">Saved front: <span id="frontRaw">—</span>° raw. Aim the sonar straight down the car's axis, at a wall or a box, and nudge until it reads the shortest distance. Hold an arrow to keep turning, or use <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd>. Saving stores this angle as 90° in <code>calibration.json</code>, for every tool.</div>
     </section>
 
     <section class="panel">
@@ -113,9 +143,14 @@
         <button data-mode="track">Line track</button>
         <button data-mode="avoid">Avoid</button>
         <button data-mode="follow">Follow</button>
+        <button data-mode="swivel">Swivel</button>
         <button data-mode="off">Manual</button>
       </div>
-      <div class="hint">Any drive input returns the car to manual.</div>
+      <div style="margin-top:10px">
+        <label>Swivel speed <output id="swivelOut">3</output></label>
+        <input id="swivelSpeed" type="range" min="1" max="5" value="3">
+      </div>
+      <div class="hint">Swivel sweeps the sonar 10–170° and back, and keeps sweeping while you drive. Any other drive input returns the car to manual. Moving the pan slider ends the swivel.</div>
     </section>
 
     <section class="panel">
@@ -131,6 +166,8 @@
   const status = $('#status'), log = $('#log');
   const speed = $('#speed'), pan = $('#pan');
   let held = null, driveTimer = null, autonomous = false, busy = false;
+  let swiveling = false, panAngle = 90;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   function say(msg, err) { status.textContent = msg; status.classList.toggle('err', !!err); }
   function addLog(line) {
@@ -155,7 +192,7 @@
   }
   function start(dir, el) {
     if (held === dir) return;
-    held = dir; autonomous = false; setModeButtons('off');
+    held = dir; autonomous = false; setModeButtons(swiveling ? 'swivel' : 'off');
     document.querySelectorAll('.pad button').forEach(b => b.classList.toggle('held', b === el));
     pulse();
     clearInterval(driveTimer); driveTimer = setInterval(pulse, 300);
@@ -181,6 +218,9 @@
     if (e.target.tagName === 'INPUT') return;
     if (e.key === ' ') { e.preventDefault(); stop(); return; }
     if (e.key === 'r' || e.key === 'R') { reloadStream(); return; }
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault(); if (!busy) aim(aimRaw + (e.key === 'ArrowLeft' ? 1 : -1)); return;
+    }
     const dir = KEYS[e.key]; if (dir === undefined || e.repeat) return;
     e.preventDefault(); start(dir, document.querySelector(`[data-dir="${dir}"]`));
   });
@@ -192,10 +232,15 @@
   let panTimer = null;
   pan.addEventListener('input', () => {
     $('#panOut').textContent = pan.value + '°';
+    if (swiveling) { swiveling = false; setModeButtons('off'); }
     clearTimeout(panTimer);
     panTimer = setTimeout(() => cmd({ frame: { N: 5, D1: 1, D2: +pan.value }, wait: 0.4 })
-      .then(() => say(`camera ${pan.value}°`)).catch(e => say(e.message, true)), 120);
+      .then(() => { setPan(+pan.value); say(`camera ${pan.value}°`); }).catch(e => say(e.message, true)), 120);
   });
+  function setPan(a) {
+    panAngle = a; pan.value = a;
+    $('#panOut').textContent = a + '°'; $('#panNow').textContent = a + '°';
+  }
 
   // --- straight trim -------------------------------------------------------
   const trim = $('#trim');
@@ -218,11 +263,146 @@
   }
   document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
     const mode = b.dataset.mode;
+    swiveling = false;
     if (mode === 'off') { autonomous = false; setModeButtons('off'); stop(); return; }
+    if (mode === 'swivel') {
+      // the UNO's own modes drive the same servo, so leave them first
+      if (autonomous) { autonomous = false; stop(); }
+      swiveling = true; setModeButtons('swivel'); swivelLoop(); return;
+    }
     autonomous = true; setModeButtons(mode);
     cmd({ cmd: 'mode ' + mode }).then(j => say(`mode: ${mode} ${j.reply || ''}`)).catch(e => say(e.message, true));
   }));
   setModeButtons('off');
+
+  // --- swivel: sweep the sonar servo, reading distance at each stop ---------
+  // Speed 1..5 trades angular detail for sweep time; a stop costs one servo
+  // and one distance round trip (0.3–0.6 s each), so step size is the lever.
+  const SWIVEL = { 1: [10, 400], 2: [10, 0], 3: [15, 0], 4: [20, 0], 5: [30, 0] };  // [step°, dwell ms]
+  const swivelSpeed = $('#swivelSpeed');
+  let sweepSecs = null, swivelRun = 0;
+  function swivelLabel() {
+    $('#swivelOut').textContent = swivelSpeed.value + (sweepSecs ? ` · ${sweepSecs.toFixed(1)} s/sweep` : '');
+  }
+  swivelSpeed.addEventListener('input', () => { sweepSecs = null; swivelLabel(); });
+  async function swivelLoop() {
+    const run = ++swivelRun;
+    // keep the raw servo angle inside 10..170 after the front offset
+    const off = frontRaw - 90, lo = Math.max(10, 10 - off), hi = Math.min(170, 170 - off);
+    let a = Math.max(lo, Math.min(hi, panAngle)), dir = a >= 90 ? -1 : 1, sweepStart = performance.now();
+    while (swiveling && run === swivelRun) {
+      while (busy) await sleep(30);
+      busy = true;
+      try {
+        await cmd({ frame: { N: 5, D1: 1, D2: a }, wait: 0.8 });
+        setPan(a);
+        const d = await cmd({ frame: { N: 21, D1: 2 }, wait: 0.6 });
+        showDistance(num(d.reply));
+        say(`swivel ${a}°`);
+      } catch (e) { say(e.message, true); await sleep(500); }
+      finally { busy = false; }
+      const [step, dwell] = SWIVEL[swivelSpeed.value];
+      if (dwell) await sleep(dwell);
+      let next = a + dir * step;
+      if (next > hi || next < lo) {
+        dir = -dir; next = Math.max(lo, Math.min(hi, a + dir * step));
+        sweepSecs = (performance.now() - sweepStart) / 1000; sweepStart = performance.now(); swivelLabel();
+      }
+      a = next;
+    }
+  }
+
+  // --- sonar front: aim the servo by raw angle, save it as straight ahead -----
+  // Raw frames skip the server's offset; 170 is left, so ◀ raises the angle.
+  let frontRaw = 90, aimRaw = 90, lastDist = null, nudgeHeld = 0;
+  function showAim() { $('#aimRaw').textContent = aimRaw; $('#frontRaw').textContent = frontRaw; }
+  async function aim(raw) {
+    swiveling = false; if (!autonomous) setModeButtons('off');
+    aimRaw = Math.max(10, Math.min(170, raw)); showAim();
+    while (busy) await sleep(30);
+    busy = true;
+    try {
+      await cmd({ frame: { N: 5, D1: 1, D2: aimRaw, raw: true }, wait: 0.8 });
+      panAngle = aimRaw - (frontRaw - 90); $('#panNow').textContent = panAngle + '°';
+      const d = await cmd({ frame: { N: 21, D1: 2 }, wait: 0.6 });
+      showDistance(num(d.reply));
+      say(`sonar ${aimRaw}° raw · ${lastDist ?? 'no echo'}${lastDist != null ? ' cm' : ''}`);
+    } catch (e) { say(e.message, true); }
+    finally { busy = false; }
+  }
+  async function nudgeWhileHeld(delta) {
+    const token = ++nudgeHeld;
+    await aim(aimRaw + delta);
+    while (nudgeHeld === token) { await sleep(120); if (nudgeHeld === token) await aim(aimRaw + delta); }
+  }
+  document.querySelectorAll('[data-nudge]').forEach(b => {
+    const delta = +b.dataset.nudge;
+    b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('held'); nudgeWhileHeld(delta); });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => b.addEventListener(ev, () => { b.classList.remove('held'); nudgeHeld++; }));
+  });
+  $('#saveFront').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/center', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ center: aimRaw, dist: lastDist }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+      frontRaw = j.center; readings.clear(); setPan(90); showAim();
+      say(`front saved: ${frontRaw}° raw`); addLog(`front = ${frontRaw}° raw (${lastDist ?? 'no echo'} cm)`);
+    } catch (e) { say(e.message, true); }
+  });
+  $('#gotoFront').addEventListener('click', () => aim(frontRaw));
+  fetch('/center').then(r => r.json()).then(c => { frontRaw = aimRaw = c.center; showAim(); }).catch(() => {});
+
+  // --- sonar radar -----------------------------------------------------------
+  // one reading per angle, the newest wins; 400 or 0 means no echo (unknown)
+  const radar = $('#radar'), rctx = radar.getContext('2d'), rangeSel = $('#range');
+  const readings = new Map();
+  const FADE_MS = 10000;
+  function showDistance(v) {
+    $('#dist').textContent = v ?? '—';
+    $('#dist').style.color = v != null && v < 30 ? 'var(--danger)' : v != null && v < 60 ? 'var(--warn)' : '';
+    lastDist = v != null && v > 0 && v < 400 ? v : null;
+    if (v != null) readings.set(panAngle,{ d: v > 0 && v < 400 ? v : null, t: performance.now() });
+  }
+  function drawRadar() {
+    const dpr = window.devicePixelRatio || 1, w = radar.clientWidth, h = radar.clientHeight;
+    if (radar.width !== w * dpr) { radar.width = w * dpr; radar.height = h * dpr; }
+    const c = rctx; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+    const range = +rangeSel.value, R = Math.min(w / 2 - 14, h - 22), ox = w / 2, oy = h - 12;
+    const pt = (deg, r) => { const a = deg * Math.PI / 180; return [ox + r * Math.cos(a), oy - r * Math.sin(a)]; };
+    c.strokeStyle = '#1f3a36'; c.fillStyle = '#5b6b7a'; c.lineWidth = 1;
+    c.font = '10px ui-monospace, monospace'; c.textAlign = 'center';
+    for (let i = 1; i <= 4; i++) {
+      c.beginPath(); c.arc(ox, oy, R * i / 4, Math.PI, 0); c.stroke();
+      c.fillText(Math.round(range * i / 4), ox + R * i / 4 - 12, oy - 2);
+    }
+    for (const deg of [10, 50, 90, 130, 170]) { c.beginPath(); c.moveTo(ox, oy); c.lineTo(...pt(deg, R)); c.stroke(); }
+    c.fillText('L', ox - R - 6, oy - 2); c.fillText('R', ox + R + 6, oy - 2);
+    const now = performance.now();
+    for (const [deg, { d, t }] of readings) {
+      const alpha = 1 - (now - t) / FADE_MS;
+      if (alpha <= 0) { readings.delete(deg); continue; }
+      c.globalAlpha = alpha;
+      if (d == null) {                                   // no echo: a grey tick at the rim
+        c.strokeStyle = '#6b7280'; c.lineWidth = 3;
+        c.beginPath(); c.moveTo(...pt(deg, R * 0.94)); c.lineTo(...pt(deg, R)); c.stroke();
+      } else if (d <= range) {
+        const r = R * d / range, color = d < 30 ? '#fc8181' : d < 60 ? '#f6ad55' : '#4fd1c5';
+        c.strokeStyle = color; c.lineWidth = 3; c.globalAlpha = alpha * 0.35;
+        c.beginPath(); c.moveTo(...pt(deg, r)); c.lineTo(...pt(deg, R)); c.stroke();   // shadow behind the hit
+        c.globalAlpha = alpha; c.fillStyle = color;
+        c.beginPath(); c.arc(...pt(deg, r), 4, 0, Math.PI * 2); c.fill();
+      } else {                                           // beyond display range
+        c.strokeStyle = '#4fd1c5'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(...pt(deg, R * 0.97)); c.lineTo(...pt(deg, R)); c.stroke();
+      }
+    }
+    c.globalAlpha = 1;
+    c.strokeStyle = '#4fd1c5'; c.lineWidth = 2;                // where the sonar faces now
+    c.beginPath(); c.moveTo(ox, oy); c.lineTo(...pt(panAngle, R)); c.stroke();
+    c.fillStyle = '#e6e8ee'; c.beginPath(); c.arc(ox, oy, 4, 0, Math.PI * 2); c.fill();
+    requestAnimationFrame(drawRadar);
+  }
+  requestAnimationFrame(drawRadar);
 
   // --- sensors -----------------------------------------------------------
   function bar(id, v) {
@@ -233,18 +413,17 @@
   function num(reply) { const m = /_(-?\d+)\}/.exec(reply || ''); return m ? +m[1] : null; }
   // distance streams continuously, between drive renewals; line sensors only when idle
   async function pollDistance() {
-    if (busy) return;
+    if (busy || swiveling) return;
     busy = true;
     try {
       const d = await cmd({ frame: { N: 21, D1: 2 }, wait: 0.6 });
-      const v = num(d.reply); $('#dist').textContent = v ?? '—';
-      $('#dist').style.color = v != null && v < 30 ? 'var(--danger)' : v != null && v < 60 ? 'var(--warn)' : '';
+      showDistance(num(d.reply));
       if (!status.classList.contains('err') && status.textContent === 'connecting…') say('ready');
     } catch (e) { say(e.message, true); }
     finally { busy = false; }
   }
   async function pollLines() {
-    if (held !== null || busy) return;
+    if (held !== null || busy || swiveling) return;
     busy = true;
     try {
       for (const [i, id] of [[0, 'lineL'], [1, 'lineM'], [2, 'lineR']]) {

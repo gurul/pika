@@ -7,19 +7,15 @@ Open tasks, in no fixed order. Each has enough context to resume cold.
 ### a) Sonar servo center calibration
 
 The servo's commanded 90° is not physically straight, so every "ahead" reading
-is taken slightly off-axis. (`calibration.json` already has
-`servo_center_deg: 90` with an older note saying 90 was confirmed straight; the
-owner now reports it is not. Treat the note as superseded.)
+is taken slightly off-axis.
 
-- Add a panel to `tools/controller.html` + `tools/controller.py`: 1° nudge
-  buttons, a live distance readout, and "save as straight", which writes
-  `servo_center_deg` to `calibration.json`.
-- Use `N=28 D1=<10..170>` (v4 nonblocking pan, whole degrees). The existing
-  "Camera pan" slider sends `N=5` in 10° steps and is too coarse for this.
-- Apply the offset in one place, e.g. `tools/car.py`: add it to outgoing
-  `N=5`/`N=28` pan angles and subtract it from the pan field of incoming
-  telemetry, so every controller and the radar (`tools/sonar_feed.py`) see
-  corrected angles without their own changes. Clamp to 10..170 after the offset.
+Built 2026-09-23: the controller's Sonar front panel (1° and 5° arrow nudges
+in raw degrees, live distance, "Save as front" to `servo_center_deg` in
+`calibration.json`), and one offset in `tools/car.py` for outgoing `N=5`/`N=28`
+and incoming telemetry pan (`tools/tests/test_pan_center.py`).
+
+Front saved by the owner on 2026-09-23: 95° raw (21 cm to the target at save
+time). Still open: see whether roaming's "ahead" readings improve with it.
 
 ### b) Kitchen island go-around
 

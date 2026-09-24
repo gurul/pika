@@ -64,7 +64,8 @@ every open room in the house.
 - **Obstacle go-around.** Bug-style: drive to a goal, meet the kitchen island,
   follow its edges with the sonar pointed sideways, and rejoin the goal line.
 - **Sonar center calibration.** The servo's commanded 90° is not physically
-  straight; a 1° calibration panel and one central offset are planned.
+  straight. The controller's Sonar front panel now sets and stores the
+  offset: front is 95° raw, set by the owner on 2026-09-23.
 - **Lidar.** A TF-Luna single-beam lidar on a separate Mega 2560 is paused
   mid bring-up. A single beam still needs a scanning and steering strategy; it
   does not by itself fix jerky driving, and the sonar map is a dead end for
@@ -165,7 +166,25 @@ tools/controller.py            # opens http://127.0.0.1:8765/
 
 Live video, a hold-to-drive pad (or WASD / arrows, Space stops), speed,
 camera-pan and straight-trim sliders (trim is saved to `calibration.json`),
-distance and line-sensor readouts, and the autonomous modes. Releasing a
+distance and line-sensor readouts, a sonar radar, and the autonomous modes.
+The radar plots each distance reading at the angle the pan servo faced, which
+fades after 10 s; no echo shows as a grey tick at the rim, not as clear space.
+**Swivel** mode sweeps the sonar from 10° to 170° and back, reading distance at
+every stop, and keeps sweeping while you drive. Its speed slider (1 to 5)
+trades detail for sweep time: 1 is 10° steps with a 400 ms pause, 5 is 30°
+steps. Each stop costs one servo and one distance round trip, 0.3 to 0.6 s
+each, measured 2026-09-23. The label shows the measured seconds per sweep.
+Moving the pan slider or picking another mode ends the swivel.
+
+**Sonar front** sets the servo angle that counts as straight ahead. The arrow
+buttons turn the sonar 1° (◀ ▶) or 5° (◀◀ ▶▶) in raw servo degrees, and
+holding one keeps turning; Shift + ←/→ does the same from the keyboard. Aim at
+a wall or box straight down the car's axis and nudge to the shortest reading,
+then **Save as front**. That writes `servo_center_deg` to `calibration.json`
+with the date and the distance read at save time. `tools/car.py` adds the
+offset to every outgoing pan angle (`N=5`, `N=28`) and maps telemetry pan back,
+so 90 means straight ahead in every tool; a frame with `"raw": true` skips it.
+Releasing a
 button sends stop. Each drive pulse is a 450 ms timed move, and forward uses
 `N=4` with a 0.7 s server deadman, so a dropped connection stops the car
 within half a second. It holds the car's single TCP slot.

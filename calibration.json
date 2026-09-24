@@ -1,6 +1,6 @@
 {
-  "servo_center_deg": 90,
-  "servo_center_note": "confirmed physically straight by Guru 2026-09-22; command value is plain degrees, 10-degree steps, 10..170",
+  "servo_center_deg": 95,
+  "servo_center_note": "front: raw servo angle that points the sonar straight ahead, set in the controller 2026-09-23; read 21 cm when saved",
   "forward_speed": 120,
   "forward_cm_per_s": 22.5,
   "forward_pulse_ms": 400,
