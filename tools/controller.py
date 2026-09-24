@@ -45,8 +45,8 @@ class Link:
     renewed by the page while the button is held; a deadman thread stops the
     car if no renewal arrives within 0.7 s."""
 
-    def __init__(self, host):
-        self.host = host
+    def __init__(self, host, port=100):
+        self.host, self.port = host, port
         self.car = None
         self.lock = threading.Lock()
         cal = load_cal()
@@ -83,7 +83,9 @@ class Link:
             self.diff_until = 0.0
         with self.lock:
             if self.car is None or not self.car.alive:
-                self.car = Car(self.host, 100, timeout=3.0, pan_center=self.pan_center)
+                self.car = Car(self.host, self.port, timeout=3.0, pan_center=self.pan_center)
+                # the UNO boots with the servo at raw 90; point it at the saved front
+                self.car.send({"N": 5, "D1": 1, "D2": 90}, wait=0.8)
             try:
                 return self.car.send(frame, wait=wait)
             except OSError:

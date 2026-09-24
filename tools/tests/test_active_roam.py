@@ -156,7 +156,7 @@ class IntegrationTests(unittest.TestCase):
             except Exception as exc:
                 failure.append(exc)
         th = threading.Thread(target=peer); th.start()
-        car = Car("127.0.0.1", server.getsockname()[1])
+        car = Car("127.0.0.1", server.getsockname()[1], pan_center=90)  # no offset: this tests the reader
         try:
             self.assertEqual(car.send({"N": 27})[1], "{1_8000}")
             deadline = time.monotonic() + 1

@@ -184,6 +184,9 @@ then **Save as front**. That writes `servo_center_deg` to `calibration.json`
 with the date and the distance read at save time. `tools/car.py` adds the
 offset to every outgoing pan angle (`N=5`, `N=28`) and maps telemetry pan back,
 so 90 means straight ahead in every tool; a frame with `"raw": true` skips it.
+The UNO boots with the servo at raw 90°, so the controller points the sonar at
+the saved front as soon as it connects. Other tools line up at their first pan
+command. If the sonar slips on the servo arm, or you refit it, set front again.
 Releasing a
 button sends stop. Each drive pulse is a 450 ms timed move, and forward uses
 `N=4` with a 0.7 s server deadman, so a dropped connection stops the car

@@ -6,6 +6,7 @@ import time
 import unittest
 
 from tools.car import Car
+from tools.controller import Link
 
 
 class FakeCar:
@@ -98,6 +99,19 @@ class PanCenterTests(unittest.TestCase):
         self.car.set_pan_center(85)
         self.car.send({"N": 28, "D1": 90}, wait=1)
         self.assertEqual(self.fake.frames[0]["D1"], 85)
+
+
+class ControllerConnectTests(unittest.TestCase):
+    def test_connecting_points_the_sonar_at_the_saved_front(self):
+        fake = FakeCar()
+        link = Link("127.0.0.1", fake.port)
+        link.pan_center = 95
+        try:
+            link.send({"N": 21, "D1": 2}, 1)
+            self.assertEqual([(f["N"], f.get("D2")) for f in fake.frames], [(5, 95), (21, None)])
+        finally:
+            link.car.close()
+            fake.close()
 
 
 if __name__ == "__main__":
