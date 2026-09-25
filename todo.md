@@ -69,6 +69,37 @@ untested on hardware.
 log. Run it beside a live `stream_roam.py --observe` run (shared `--run-dir`)
 and confirm the live and stale states.
 
+### f) Person follow: flash the camera-range build, then floor runs
+
+**Next session starts here.** Source has a build not yet on the car: the camera
+sets the range (box height), the sonar is only an obstacle reflex (UNO: brake
+at 22 cm, back off at 14; Mac: detour around it), and the telemetry stream is
+the one sonar pinger. Flash it (USB, UART switch), then a held test, then the
+floor. Earlier floor runs on 2026-09-25: too fast and lost the person (speeds
+lowered); drove into a wall on alternating sonar readings (sonar no longer
+sets the speed); stood still because `N=22` knocked the UNO out of follow mode
+(blocked now); choppy stop-go from Mac sonar checks (removed). Charge the
+battery first: 6.93 V at the end.
+
+Built 2026-09-25 (README "Person follow", `GATES-follow.md`). Offline checks
+pass: firmware host scenarios, v5 build at 32,160 of 32,256 bytes, Vision on a
+photo, and the controller end to end against a fake car and camera. Nothing has
+run on the car.
+
+1. Done 2026-09-25: v5 flashed twice (the second with calmer speeds and
+   sonar checks after a wall collision), verified, USB static checks passed.
+   Only 74 bytes of flash are left.
+2. Car held or on blocks: press Follow, click yourself. Step left of the
+   picture: the page must say "left" (else `camera_mirror: true`) and the
+   wheels must turn the car left. Walk out of frame sideways: it turns that
+   way in pulses, then stops within 3 s. Stop the controller: the wheels stop within
+   0.5 s.
+3. On the floor: check it holds about 30 cm, backs off when you step in, and
+   note the live match distance for you versus someone else to tune `MATCH`
+   in `tools/follow.py` (set from one photo, not this camera).
+4. Frame age uses an 80 ms transport estimate (`TRANSPORT_MS`). If it swings
+   past you when turning, measure the real delay and adjust.
+
 ## Paused: TF-Luna lidar bring-up — 2026-09-22
 
 Paused explicitly by user. Do not continue programming, wiring tests or flashing until they resume this work. User now wants to understand why the older autodrive was better.

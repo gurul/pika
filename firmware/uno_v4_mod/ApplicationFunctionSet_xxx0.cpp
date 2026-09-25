@@ -12,6 +12,7 @@
 #include <string.h>
 #include "ApplicationFunctionSet_xxx0.h"
 #include "DeviceDriverSet_xxx0.h"
+#include "FollowDrive.h"
 
 #include "ArduinoJson-v6.11.1.h" //ArduinoJson
 #include "MPU6050_getdata.h"
@@ -35,6 +36,7 @@ DeviceDriverSet_IRrecv AppIRrecv;
 // mod: opt-in v4 telemetry; legacy N=25 callers keep their seven fields.
 static bool ActiveStream = false;
 static uint16_t ActiveSequence = 0;
+static FollowDrive followDrive;
 /*f(x) int */
 static boolean
 function_xxx(long x, long s, long e) //f(x)
@@ -367,6 +369,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_SensorDataUpdate(void)
         AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&d);
       // Timeout is unknown, never evidence for a 4 m clear corridor.
       if (ActiveStream && d >= 400) d = 0;
+      followDrive.sonar(d); // mod: the follow reflex hears the same pings
       Serial.print(F("{T_")); Serial.print(d);
       Serial.print('_'); Serial.print((int)(Yaw_deg * 10));
       Serial.print('_'); Serial.print(TrackingData_L);
@@ -734,107 +737,18 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Obstacle(void)
   }
 }
 
-/*
-  跟随模式：
-*/
+/* mod: person follow. Bearings come from the Mac (N=29); the sonar holds the gap. */
 void ApplicationFunctionSet::ApplicationFunctionSet_Follow(void)
 {
-  static uint16_t ULTRASONIC_Get = 0;
-  static unsigned long ULTRASONIC_time = 0;
-  static uint8_t Position_Servo = 1;
-  static uint8_t timestamp = 3;
-  static uint8_t OneCycle = 1;
-  if (Application_SmartRobotCarxxx0.Functional_Mode == Follow_mode)
-  {
-
-    if (Car_LeaveTheGround == false)
-    {
-      ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-      return;
-    }
-    AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&ULTRASONIC_Get /*out*/);
-    if (false == function_xxx(ULTRASONIC_Get, 0, 20)) //前方 20 cm内无障碍物？
-    {
-      ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-      static unsigned long time_Servo = 0;
-      static uint8_t Position_Servo_xx = 0;
-
-      if (timestamp == 3)
-      {
-        if (Position_Servo_xx != Position_Servo) //作用于舵机：避免循环执行
-        {
-          Position_Servo_xx = Position_Servo; //作用于舵机：转向角记录
-
-          if (Position_Servo == 1)
-          {
-            time_Servo = _millis();
-            AppServo.DeviceDriverSet_Servo_control(80 /*Position_angle*/);
-          }
-          else if (Position_Servo == 2)
-          {
-            time_Servo = _millis();
-            AppServo.DeviceDriverSet_Servo_control(20 /*Position_angle*/);
-          }
-          else if (Position_Servo == 3)
-          {
-            time_Servo = _millis();
-            AppServo.DeviceDriverSet_Servo_control(80 /*Position_angle*/);
-          }
-          else if (Position_Servo == 4)
-          {
-            time_Servo = _millis();
-            AppServo.DeviceDriverSet_Servo_control(150 /*Position_angle*/);
-          }
-        }
-      }
-      else
-      {
-        if (timestamp == 1)
-        {
-          timestamp = 2;
-          time_Servo = _millis();
-        }
-      }
-      if (_millis() - time_Servo > 1000) //作用于舵机停留位置时长_2s
-      {
-        timestamp = 3;
-        Position_Servo += 1;
-        OneCycle += 1;
-        if (OneCycle > 4)
-        {
-          Position_Servo = 1;
-          OneCycle = 5;
-        }
-      }
-    }
-    else
-    {
-      OneCycle = 1;
-      timestamp = 1;
-      if ((Position_Servo == 1))
-      { /*控制左右电机转动：前进*/
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 100);
-      }
-      else if ((Position_Servo == 2))
-      { /*控制左右电机转动：前右*/
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Right, 150);
-      }
-      else if ((Position_Servo == 3))
-      {
-        /*控制左右电机转动：前进*/
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 100);
-      }
-      else if ((Position_Servo == 4))
-      { /*控制左右电机转动：前左*/
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Left, 150);
-      }
-    }
-  }
-  else
-  {
-    ULTRASONIC_Get = 0;
-    ULTRASONIC_time = 0;
-  }
+  if (Application_SmartRobotCarxxx0.Functional_Mode != Follow_mode)
+    return;
+  const unsigned long now = _millis();
+  const int16_t yaw10 = Yaw_deg * 10;
+  followDrive.sample(yaw10, now); // sonar comes from the telemetry stream (followDrive.sonar)
+  int l, r;
+  followDrive.wheels(Car_LeaveTheGround, yaw10, now, l, r);
+  AppMotor.DeviceDriverSet_Motor_control(/*direction_A*/ r >= 0, /*speed_A*/ r < 0 ? -r : r,
+                                         /*direction_B*/ l >= 0, /*speed_B*/ l < 0 ? -l : l, /*controlED*/ control_enable);
 }
 
 /*舵机控制*/
@@ -1967,6 +1881,9 @@ void ApplicationFunctionSet::ApplicationFunctionSet_SerialPortDataAnalysis(void)
         Serial.print('{' + CommandSerialNumber + "_ok}");
 #endif
         break;
+      case 29: /* mod: follow bearing, D1 degrees (+ = left), D2 0 lost / 1 seen / 2 search, D3 frame age ms, D4 camera range cm; no reply */
+        followDrive.hint(doc["D1"], doc["D2"], doc["D3"], doc["D4"], Yaw_deg * 10, _millis());
+        break;
       case 28: /* mod: nonblocking pan, independent of motor mode */
         AppServo.panStart(doc["D1"]);
         Serial.print('{'); Serial.print(CommandSerialNumber); Serial.print(F("_ok}"));
@@ -1997,6 +1914,11 @@ void ApplicationFunctionSet::ApplicationFunctionSet_SerialPortDataAnalysis(void)
         else if (3 == doc["D1"])
         {
           Application_SmartRobotCarxxx0.Functional_Mode = Follow_mode;
+          followDrive.hinted = false; // mod: wait for a fresh bearing
+          followDrive.sonarNow = followDrive.sonarPrev = 0;
+          uint8_t front = doc["D2"]; // mod: sonar to the saved front, raw degrees
+          if (front)
+            AppServo.panStart(front);
         }
 
 #if _is_print

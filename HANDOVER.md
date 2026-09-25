@@ -1,5 +1,36 @@
 # Handover: ELEGOO car project, 2026-09-22
 
+## 2026-09-25 end of session: camera-range build NOT flashed
+
+The car runs the 30 cm sonar-gap build. The source now has the camera-range /
+sonar-reflex / detour build (32,114 bytes, host-checked), not yet flashed.
+Paused by the owner; next steps are todo.md task f. Battery 6.93 V: charge.
+
+## 2026-09-25: person follow built, UNO v5 flashed (Claude Code session)
+
+Controller Follow: click a person in the video; the Mac tracks them with Apple
+Vision (`tools/follow.py`) and sends `N=29` bearings; the UNO's new
+`FollowDrive.h` holds the gap on sonar and steers on the gyro. The UNO runs v5
+(32,164 of 32,256 bytes), flashed 2026-09-25 over `/dev/cu.usbserial-3130` and
+verified by read-back; v4 backup `firmware/build-archive/uno-v4-before-follow-20260925.hex`.
+Reflashed the same day (32,182 bytes, verified; previous v5 kept as
+`uno-v5a-before-calm-20260925.hex`) after the floor runs: calmer speeds, drive
+on the shorter of the last two sonar readings, no forward drive on no echo. The
+first floor run drove into a wall: the sonar flipped between 140 cm (past the
+person) and 45 cm (the wall), and each far reading was a full-speed burst.
+The Mac also guards now (`guard` in tools/follow.py). Gyro drifted about
+5.7 deg/s standing still: recalibrate (N=26) with the car still. Battery 6.97 V.
+Third flash the same day: follow gap 50 -> 30 cm (owner asked for closer),
+previous build kept as `uno-v5b-before-closer-20260925.hex`. Also found why
+follow stood still: the page's line-sensor poll (N=22) switches the UNO to
+programming mode; the page and server now block it while following.
+USB static checks passed: distance, yaw, battery replies; `N=29` accepted
+silently; 41 telemetry frames with the MCU clock rising 1628 -> 6068 ms (no
+reset). No motion was sent on USB. v5 prints no boot banner (commented out in
+MPU6050_getdata.cpp), so an empty boot read is normal. The controller now owns the camera's single MJPEG
+viewer and relays it at `/stream`. Offline gates in `GATES-follow.md`; the
+hardware steps are `todo.md` task f.
+
 ## 2026-09-22 evening: restored VFH controller + live radar (Claude Code session)
 
 `tools/stream_roam.py` (VFH restored on v4 telemetry) and `tools/sonar_feed.py` +

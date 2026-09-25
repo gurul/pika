@@ -151,6 +151,14 @@ class Car:
                     self.lock.wait(max(0, deadline - time.monotonic()))
             return line, None
 
+    def post(self, obj):
+        """Fire and forget: a frame with no reply, never queued behind a send()
+        that is waiting for its answer (follow bearings, N=29)."""
+        line = json.dumps({"H": "f", **self._pan(obj)}, separators=(",", ":"))
+        with self.write_lock:
+            self.sock.sendall(line.encode())
+        return line
+
     def close(self):
         self.alive = False
         self.sock.close()

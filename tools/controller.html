@@ -20,6 +20,10 @@
   .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 14px; }
   .panel h2 { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin: 0 0 10px; }
   #video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; object-fit: contain; display: block; }
+  .cam { position: relative; }
+  #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .cam.picking #video { cursor: crosshair; outline: 2px solid var(--warn); outline-offset: 2px; }
+  #followInfo { font-variant-numeric: tabular-nums; }
   .stack { display: flex; flex-direction: column; gap: 14px; }
   .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .pad button { height: 64px; font-size: 22px; }
@@ -61,8 +65,12 @@
 <main>
   <section class="panel">
     <h2>Camera</h2>
-    <img id="video" alt="live view from the car">
-    <div class="hint">The board serves one viewer at a time: close other tabs showing the stream. If it stalls, press <kbd>R</kbd> to reload it.</div>
+    <div class="cam" id="cam">
+      <img id="video" alt="live view from the car">
+      <canvas id="overlay" aria-hidden="true"></canvas>
+    </div>
+    <div class="hint" id="followInfo" role="status" aria-live="polite"></div>
+    <div class="hint">The board serves one viewer, and this controller is it: any number of tabs can watch. If the picture stalls, press <kbd>R</kbd> to reload it.</div>
   </section>
 
   <div class="stack">
@@ -151,6 +159,7 @@
         <input id="swivelSpeed" type="range" min="1" max="5" value="3">
       </div>
       <div class="hint">Swivel sweeps the sonar 10–170° and back, and keeps sweeping while you drive. Any other drive input returns the car to manual. Moving the pan slider ends the swivel.</div>
+      <div class="hint"><b>Follow</b>: press it, then click the person in the video. The car keeps about 30 cm behind them and steers to keep them centred. It stops when it loses them for more than a moment, when this page closes, and on any drive key. Click someone else in the video to switch.</div>
     </section>
 
     <section class="panel">
@@ -263,8 +272,13 @@
   }
   document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
     const mode = b.dataset.mode;
-    swiveling = false;
+    swiveling = false; setPicking(false);
     if (mode === 'off') { autonomous = false; setModeButtons('off'); stop(); return; }
+    if (mode === 'follow') {
+      if (autonomous) { autonomous = false; stop(); }
+      if (follow.unavailable) { say('follow: ' + follow.unavailable, true); return; }
+      setModeButtons('follow'); setPicking(true); say('click the person to follow'); return;
+    }
     if (mode === 'swivel') {
       // the UNO's own modes drive the same servo, so leave them first
       if (autonomous) { autonomous = false; stop(); }
@@ -274,6 +288,68 @@
     cmd({ cmd: 'mode ' + mode }).then(j => say(`mode: ${mode} ${j.reply || ''}`)).catch(e => say(e.message, true));
   }));
   setModeButtons('off');
+
+  // --- follow a person: pick them in the video, the server tracks them ------
+  const cam = $('#cam'), overlay = $('#overlay'), video = $('#video');
+  let follow = {}, picking = false;
+  function setPicking(on) { picking = on; cam.classList.toggle('picking', on); }
+  async function post(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  }
+  // where the picture sits inside the element: object-fit: contain letterboxes a frame that is not 4:3
+  function picture() {
+    const w = video.clientWidth, h = video.clientHeight;
+    const iw = video.naturalWidth || 4, ih = video.naturalHeight || 3;
+    const s = Math.min(w / iw, h / ih);
+    return { x: (w - iw * s) / 2, y: (h - ih * s) / 2, w: iw * s, h: ih * s };
+  }
+  video.addEventListener('click', e => {
+    if (!picking && !follow.on) return;
+    const r = video.getBoundingClientRect(), p = picture();
+    const x = (e.clientX - r.left - p.x) / p.w, y = (e.clientY - r.top - p.y) / p.h;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    say('looking for a person there…');
+    post('/follow/select', { x, y, start: true }).then(j => {
+      follow = Object.assign(follow, j); setPicking(false); autonomous = true; setModeButtons('follow');
+      say('following');
+    }).catch(err => say(err.message, true));
+  });
+  function drawOverlay() {
+    const w = overlay.clientWidth, h = overlay.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (overlay.width !== w * dpr || overlay.height !== h * dpr) { overlay.width = w * dpr; overlay.height = h * dpr; }
+    const c = overlay.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+    const target = follow.seen ? follow.box : null, p = picture();
+    for (const b of (picking || follow.locked ? follow.boxes || [] : [])) {
+      const mine = target && b.every((v, i) => Math.abs(v - target[i]) < 1e-6);
+      c.strokeStyle = mine ? '#4fd1c5' : 'rgba(230,232,238,.55)'; c.lineWidth = mine ? 3 : 1.5;
+      c.strokeRect(p.x + b[0] * p.w, p.y + b[1] * p.h, b[2] * p.w, b[3] * p.h);
+    }
+  }
+  async function pollFollow() {
+    try {
+      const r = await fetch('/follow'); follow = await r.json();
+    } catch (e) { return; }
+    const info = $('#followInfo');
+    if (follow.unavailable) info.textContent = '';
+    else if (follow.video_error) info.textContent = 'video: ' + follow.video_error;
+    else if (follow.on) {
+      const [b, s] = follow.hint || [0, 0];
+      info.textContent = follow.avoid === 'detour' ? 'going around something in the way'
+        : follow.avoid === 'rejoin' ? 'heading back to where they were'
+        : s === 1 ? `following · ${b > 0 ? b + '° left' : b < 0 ? -b + '° right' : 'dead ahead'} · match ${follow.match ?? '—'} · ${follow.fps} fps`
+        : s === 2 ? `lost them · turning ${b > 0 ? 'left' : 'right'} to look` : 'lost them · stopped';
+    } else if (picking) info.textContent = `${(follow.boxes || []).length} people in view · click one`;
+    else info.textContent = follow.locked ? 'follow paused · press Follow to pick again' : '';
+    if (!follow.on && autonomous && document.querySelector('[data-mode="follow"].on') && !picking) {
+      autonomous = false; setModeButtons('off');
+    }
+    drawOverlay();
+  }
+  setInterval(pollFollow, 300);
 
   // --- swivel: sweep the sonar servo, reading distance at each stop ---------
   // Speed 1..5 trades angular detail for sweep time; a stop costs one servo
@@ -423,7 +499,8 @@
     finally { busy = false; }
   }
   async function pollLines() {
-    if (held !== null || busy || swiveling) return;
+    // the UNO's line-sensor query drops it out of follow mode
+    if (held !== null || busy || swiveling || follow.on) return;
     busy = true;
     try {
       for (const [i, id] of [[0, 'lineL'], [1, 'lineM'], [2, 'lineR']]) {

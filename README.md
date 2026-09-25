@@ -12,7 +12,9 @@ gyro and camera.
 This is an evolving project. What works today: driving over Wi-Fi without
 losing the Mac's internet, a browser controller with live video, gyro-closed
 turns that land within 1.5°, VFH-lite reactive roaming, and a sonar radar
-view (so far checked on a replayed log). What is still in progress: smooth autonomous navigation, going around
+view (so far checked on a replayed log). Person follow (pick someone in the
+video and the car follows them) is built, passes its offline checks and is
+flashed, but has not driven the car yet. What is still in progress: smooth autonomous navigation, going around
 an obstacle to reach a goal, and a TF-Luna lidar (bring-up paused). Each
 autonomy mode below says plainly how far it has been verified.
 [todo.md](todo.md) has the open tasks and [HANDOVER.md](HANDOVER.md) the
@@ -45,6 +47,11 @@ detailed hardware state.
 - **Roams.** `tools/roam.py` is VFH-lite reactive roaming with smooth arcs. The
   owner likes how it drives best. It still spins at random when blocked
   ([todo.md](todo.md), task c).
+- **Follows a person you pick.** In the browser controller, press Follow and
+  click someone in the video. The Mac recognises them with Apple's Vision
+  framework and sends their bearing to the car; the UNO holds about 30 cm
+  behind them on its own sonar and stops when the bearings stop. See
+  [Person follow](#person-follow). Flashed; not yet run on the car.
 - **Shows its sonar.** `tools/sonar_feed.py` draws a radar view from a
   controller's log. So far it has been checked on a replayed log, not a live
   drive.
@@ -166,7 +173,12 @@ tools/controller.py            # opens http://127.0.0.1:8765/
 
 Live video, a hold-to-drive pad (or WASD / arrows, Space stops), speed,
 camera-pan and straight-trim sliders (trim is saved to `calibration.json`),
-distance and line-sensor readouts, a sonar radar, and the autonomous modes.
+distance and line-sensor readouts, a sonar radar, and the autonomous modes,
+including [Person follow](#person-follow). The board serves one video viewer,
+so the controller is that viewer: it relays the stream to the page at
+`/stream`, any number of tabs can watch, and the follower reads the same
+frames. It restarts itself under `.venv/` when the system Python lacks Apple's
+Vision bindings.
 The radar plots each distance reading at the angle the pan servo faced, which
 fades after 10 s; no echo shows as a grey tick at the rim, not as clear space.
 **Swivel** mode sweeps the sonar from 10° to 170° and back, reading distance at
@@ -207,7 +219,10 @@ first, it clashes with the SDK's dirent.h) and copy the result over
 
 `firmware/uno_v4_mod/` is ELEGOO's stock `SmartRobotCarV4.0_V0_20210104`
 sketch with the changes below, each marked `mod:` in the source. The running
-UNO has v4, flashed 2026-09-22 and read back byte for byte.
+UNO has v5, which adds person follow (the last two rows): 32,182 of 32,256
+bytes, flashed 2026-09-25 and verified by read-back, including the calmer
+speeds and sonar checks from the first floor runs. v4 is kept at
+`firmware/build-archive/uno-v4-before-follow-20260925.hex` for rollback.
 
 | Change | Effect |
 |---|---|
@@ -221,6 +236,8 @@ UNO has v4, flashed 2026-09-22 and read back byte for byte.
 | `N=26` gyro recalibration | re-zeroes the gyro; the car must be still, and not just set down (that gave 7 deg/s drift) |
 | `N=27` battery voltage | replies millivolts; also a stream field |
 | TB6612 shield pin map | standby pin 3 driven high (no motor runs otherwise) and group A's direction polarity inverted. `-DSHIELD_DRV8835` restores ELEGOO's map |
+| `N=101 D1=3 D2=<raw front>` (v5) | follow mode replaces ELEGOO's stock one (which drove into anything closer than 20 cm). Points the sonar at the saved front and waits for bearings |
+| `N=29 D1=<deg> D2=<0/1/2> D3=<ms> D4=<cm>` (v5) | follow bearing, no reply: degrees from the camera axis (+ = left); 0 lost, 1 seen, 2 search toward that side; how old the frame is; the camera's range to the person. The UNO fixes the bearing to the gyro heading of that moment, drives on the range, brakes on the sonar, and drops it after 500 ms (`FollowDrive.h`) |
 
 In the v4 stream the pan field is the commanded angle, negative while the
 servo settles; it is not an encoder reading. Sequence and sample milliseconds
@@ -277,6 +294,87 @@ controllers, and use a supervised, clear, level floor away from stairs.
 | Stream VFH + radar | `tools/stream_roam.py`, `tools/sonar_feed.py` | Offline checks pass; froze in a real room |
 | Active sonar | `tools/active_roam.py` | Stop, scan, move; regressed from `roam.py` |
 | Room mapping | `tools/explore.py` | Experimental; not adapted to the 400 cm firmware |
+| Person follow | `tools/controller.py` + UNO v5 | Offline checks pass; v5 flashed; not yet run on the car |
+
+Person follow is the one split mode: the Mac sees, the UNO drives.
+
+### Person follow
+
+In the controller, press **Follow**, then click the person in the video. The
+page outlines everyone it can see while you pick, and the person it follows in
+teal. Click someone else to switch. Any drive key, Space, Manual or closing
+the page stops it.
+
+How it works:
+
+- **Mac, `tools/follow.py`.** Apple Vision finds people's upper bodies in every
+  frame (`VNDetectHumanRectanglesRequest`, 50 to 60 ms per 800 × 600 frame on
+  this Mac). Upper body, because the camera tilts up and a person near the car
+  is head and shoulders: on the car's camera it found the person in 30 of 30
+  frames, full body in 22. The click picks one; an image feature print of their box is what they
+  look like. Each frame, the person with the closest print wins, with a looser
+  threshold for one who overlaps where they just were. A match that jumps
+  across the frame counts only once a second frame agrees. Their bearing and
+  range go to the UNO 8 times a second as `N=29`, with the frame's age. The
+  range comes from the camera, not the sonar: distance ≈ 35 ÷ box height
+  (box height × sonar distance was 32 to 41 across four floor runs), smoothed.
+- **Camera for the person, sonar only for obstacles.** The sonar is a narrow
+  beam that also hits walls, furniture and the floor, and using it for the
+  range to the person made the car stop-go and once drove it into a wall. Now
+  it is only a reflex. On the UNO, two pings in a row within 22 cm stop
+  forward motion, and within 14 cm back the car off. On the Mac, two front
+  pings within 30 cm that are not the person straight ahead start a detour:
+  steer 50° to the person's side (the other side if it was just blocked that
+  way), keep that heading 1 s after the way clears, then steer back to where
+  the person was for up to 2 s. While they are out of the picture, the Mac
+  keeps them as a gyro heading. The telemetry stream (10 a second) is the
+  only thing pinging the sonar while following, because two pingers hear each
+  other's echoes; the page's distance readout is answered from it.
+- **UNO, `FollowDrive.h`.** Holds about 30 cm, give or take 8, on the camera
+  range: drives on when further (faster the further), stops inside the band,
+  backs off below 18 cm only when the person is straight ahead, and turns on
+  the spot toward someone off to the side. A frame is a few hundred ms old when its bearing
+  lands, and turning toward it would overshoot, so the UNO looks up its gyro
+  heading at the time the frame was taken (a 0.5 s history) and steers to that
+  fixed heading between bearings. It is deliberately slow (top speed 110,
+  turning 80): the camera sees about ±31° and runs about 0.2 s behind, and the
+  first floor run at 150 and 90 went too fast and lost the person.
+- **Losing them.** A miss under 0.3 s keeps the last bearing. After that,
+  if they were last seen 12° or more off-centre, the car looks toward that
+  side in pulses (0.35 s turning, 0.5 s still so the camera gets a sharp
+  frame) for up to 3 s; otherwise it stops. No bearing for 0.5 s stops the car
+  on the UNO, whatever the reason: Mac, Wi-Fi or tracker.
+- **Mode traps.** ELEGOO's line-sensor query (`N=22`) switches the UNO to
+  programming mode as a side effect, which silently ended every follow within
+  2.5 s of the page's sensor poll. The page skips that poll while following,
+  and the server refuses `N=22` with 409 until follow stops. `N=5` (servo)
+  also changes mode, so it counts as taking the car back.
+- **Trace.** Every bearing sent is a line in `build/follow.jsonl` (time,
+  bearing, seen, frame age, range, detour state, match distance, box, people
+  in view, and the car's sonar, gyro and battery).
+
+Lessons from buddy's person follower (`buddy/bridge`, `follow.py` and
+`identity.py`) that carried over: follow a person, not each sighting
+(frames are stale and a single box can be someone else); Vision's feature
+print distance is plain Euclidean over its floats, computed here because
+pyobjc does not return it; native `nil` options; revision-2 prints; one
+autorelease pool per frame.
+
+Not verified on the car yet. Before trusting it, check with the car on blocks
+or held: that a person on the left of the picture reads "left" (if not, set
+`camera_mirror: true` in `calibration.json`), that the car turns toward them,
+and the stop behaviours above. `camera_hfov_deg` (default 62) sets how a box
+position becomes degrees. Match thresholds come from 30 frames of one person on the
+car's camera (0.12 to 0.39) and different people on a photo (0.70 and up); the
+page shows the live match distance if they need tuning.
+
+Needs the UNO on the latest v5 (see [Build and flash](#build-and-flash); the
+camera-range and sonar-reflex build is **not flashed yet**, the car has the
+earlier one that keeps the gap on the sonar) and pyobjc's Vision in `.venv/`:
+
+```sh
+uv pip install --python .venv/bin/python pyobjc-framework-Vision pyobjc-framework-Quartz
+```
 
 ### Precise moves
 
@@ -463,7 +561,7 @@ modified firmware; its additions are in [UNO firmware](#uno-firmware).
 | `{"H":"2","N":22,"D1":1}` | middle line sensor (D1 0/1/2 = L/M/R) |
 | `{"H":"3","N":5,"D1":1,"D2":90}` | gimbal servo to 90 degrees |
 | `{"H":"4","N":2,"D1":3,"D2":120,"T":800}` | forward, speed 120, 800 ms |
-| `{"H":"5","N":101,"D1":2}` | mode: 1 line tracking, 2 obstacle avoidance, 3 follow |
+| `{"H":"5","N":101,"D1":2}` | mode: 1 line tracking, 2 obstacle avoidance, 3 follow (v5: person follow, see [UNO firmware](#uno-firmware)) |
 | `{"H":"6","N":100}` | stop, standby |
 
 Direction codes for `D1` on N=2 and N=3: 1 left, 2 right, 3 forward, 4 back.
@@ -478,12 +576,13 @@ Over Wi-Fi the camera module relays these frames on TCP port 100, sends
 ```text
 firmware/camera_s3/      ESP32-S3 camera firmware (station mode), the one that is flashed; see ORIGIN.md
 firmware/camera_sta/     earlier attempt for the older ESP32-WROVER camera board; compiles, never flashed
-firmware/uno_v4_mod/     modified UNO sketch (v4)
+firmware/uno_v4_mod/     modified UNO sketch (v5); FollowDrive.h is the follow drive
 firmware/mega_lidar/     TF-Luna reader for a Mega 2560; unverified draft, paused
 firmware/build-archive/  factory flash backups, gitignored
 tools/car.py             Wi-Fi command client (TCP port 100), parses both telemetry formats
 tools/controller.py      browser controller: serves controller.html on localhost, proxies to TCP 100
 tools/controller.html    the controller page
+tools/follow.py          person follow: stream relay, Apple Vision tracker, bearing loop
 tools/safety.py          sends motion frames: pulse cap, forward veto, watchdog, e-stop
 tools/precision.py       gyro-closed turns, sonar-closed drives
 tools/roam.py            VFH-lite roaming
@@ -496,7 +595,7 @@ tools/mapping.py         log-odds occupancy grid, beam-model scan matcher, front
 tools/sonar.py           servo sweeps and motion calibration
 tools/vision.py          room label, hazards and doorways from the camera via OpenAI
 tools/flash_camera.sh    compile + hwlog flash + boot verification
-tools/tests/             unit tests
+tools/tests/             unit tests; fixtures/people-cc0.jpg is a CC0 Wikimedia Commons photo
 scripts/                 gate checks, simulations and replay rendering
 calibration.json         measured speeds, turn rate, yaw sign, trim, servo center
 .claude/skills/          hwlog agent skill, installed by `hwlog init`
@@ -510,7 +609,8 @@ the gyro.
 ## Development
 
 The project Python is `.venv/` (uv, Python 3.12: numpy, pillow, openai,
-pyserial). Offline checks need no car:
+pyserial, pyobjc-framework-Vision, pyobjc-framework-Quartz). Offline checks
+need no car:
 
 ```sh
 .venv/bin/python -m unittest discover -s tools/tests -t .
@@ -521,13 +621,14 @@ pyserial). Offline checks need no car:
 .venv/bin/python scripts/check_active_roam.py firmware
 .venv/bin/python scripts/check_active_roam.py simulation
 .venv/bin/python scripts/check_active_stall.py
+.venv/bin/python scripts/check_follow.py        # firmware, tracker, controller end to end (fake car)
 .venv/bin/python scripts/render_roam_replay.py
 .venv/bin/python scripts/check_readme.py && .venv/bin/python scripts/check_readme.py --uno
 ```
 
 Acceptance ledgers record which claims have evidence: [GATES.md](GATES.md)
 (mapping), [GATES-uno.md](GATES-uno.md) (firmware),
-[GATES-active-roam.md](GATES-active-roam.md), and `.unlazy/*/GATES.md` for
+[GATES-active-roam.md](GATES-active-roam.md), [GATES-follow.md](GATES-follow.md), and `.unlazy/*/GATES.md` for
 later work. A passing simulation is not evidence of smooth driving on a real
 floor. [HANDOVER.md](HANDOVER.md) is the running hardware state and trap list.
 
